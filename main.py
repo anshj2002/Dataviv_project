@@ -1,61 +1,69 @@
-from fastapi import FastAPI, File, UploadFile
-import zipfile, os
+import os
+import zipfile
+from fastapi import FastAPI, File, UploadFile, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi import Request
 import requests
+from typing import Optional
+import json
 
-
-app = FastAPI()
-
+# Config
 UPLOAD_DIR = "uploaded_data"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+HF_API_KEY = os.getenv("HF_API_KEY")  
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+
+def unzip_file(zip_path, extract_to):
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+
+
+def get_file_structure(root_dir):
+    structure = {}
+    for dirpath, dirs, files in os.walk(root_dir):
+        rel_path = os.path.relpath(dirpath, root_dir)
+        structure[rel_path] = {"dirs": dirs, "files": files}
+    return structure
+
+
 @app.post("/upload")
-async def upload_dataset(file: UploadFile = File(...)):
-    filepath = os.path.join(UPLOAD_DIR, file.filename)
-    with open(filepath, "wb") as f:
+async def upload_file(file: UploadFile = File(...)):
+    save_path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(save_path, "wb") as f:
         f.write(await file.read())
 
-    # Unzip
-    with zipfile.ZipFile(filepath, 'r') as zip_ref:
-        zip_ref.extractall(UPLOAD_DIR)
+    folder_name = os.path.splitext(file.filename)[0]
+    extract_path = os.path.join(UPLOAD_DIR, folder_name)
+    os.makedirs(extract_path, exist_ok=True)
+    unzip_file(save_path, extract_path)
 
-    return {"message": "File uploaded and extracted"}
+    return {"message": "File uploaded and extracted successfully", "folder": folder_name}
 
-def get_file_structure(path):
-    tree = {}
-    for root, dirs, files in os.walk(path):
-        tree[root] = {"dirs": dirs, "files": files}
-    return tree
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     structure = get_file_structure(UPLOAD_DIR)
     return templates.TemplateResponse("index.html", {"request": request, "structure": structure})
 
-def mistral_query(prompt: str):
-    headers = {
-        "Authorization": f"Bearer {HF_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 300,
-            "temperature": 0.7
-        }
-    }
-    response = requests.post(
-        f"https://api-inference.huggingface.co/models/{MISTRAL_MODEL}",
-        headers=headers,
-        json=payload
-    )
-    return response.json()
 
 @app.get("/search")
-def search_dataset(query: str):
-    dataset_structure = get_file_structure(UPLOAD_DIR)
-    prompt = f"The dataset has the following folder structure: {dataset_structure}. Answer the query: {query}"
-    result = mistral_query(prompt)
-    return {"answer": result[0]["generated_text"]}
+def search_dataset(q: Optional[str]):
+    if not q:
+        return {"error": "Please provide a query ?q=..."}
+    # Make a simple prompt for LLM
+    prompt = f"The dataset file structure is:\n{json.dumps(get_file_structure(UPLOAD_DIR), indent=2)}\n\nQuestion: {q}\nAnswer:"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    resp = requests.post(
+        "https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct",
+        headers=headers,
+        json={"inputs": prompt}
+    )
+    try:
+        answer = resp.json()[0]["generated_text"]
+    except:
+        answer = resp.text
+    return {"query": q, "answer": answer}

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dataset Explorer</title>
+</head>
+<body>
+    <h1>Uploaded Dataset Structure</h1>
+    {% for path, content in structure.items() %}
+        <h3>{{ path }}</h3>
+        <p>Folders: {{ content.dirs }}</p>
+        <p>Files: {{ content.files }}</p>
+        <hr>
+    {% endfor %}
+
+    <h2>Search Dataset</h2>
+    <form action="/search" method="get">
+        <input type="text" name="q" placeholder="Ask about the dataset" style="width: 300px;">
+        <button type="submit">Search</button>
+    </form>
+
+    <h2>Upload New Dataset</h2>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".zip">
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>
